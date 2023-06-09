@@ -1,0 +1,10 @@
+<%- include("partials/header"); -%>
+
+    <h1>Edit Post</h1>
+    <form action="/posts/<%= post._id %>/edit" method="POST">
+        <input type="text" name="postTitle" value="<%= post.title %>" placeholder="Post Title" required>
+        <textarea name="postBody" placeholder="Post Content" required><%= post.content %></textarea>
+        <button type="submit">Update Post</button>
+    </form>
+
+    <%- include("partials/footer"); -%>
