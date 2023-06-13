@@ -1,214 +1,247 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const ejs = require("ejs");
+const express = require('express');
+const bodyParser = require('body-parser');
+const ejs = require('ejs');
 const mongoose = require('mongoose');
 const session = require('express-session');
-const argon2 = require("argon2");
+const MongoStore = require('connect-mongo')(session);
+const argon2 = require('argon2');
+const cookieParser = require('cookie-parser');
 
-const homeStartingContent = "Welcome to the ALTech blog! We are a tech company dedicated to providing cutting-edge solutions and innovations. Our team of experts is passionate about technology and committed to delivering exceptional products and services.";
+const homeStartingContent = 'Welcome to the ALTech blog! We are a tech company dedicated to providing cutting-edge solutions and innovations. Our team of experts is passionate about technology and committed to delivering exceptional products and services.';
 
-const aboutContent = "At ALTech, we strive to revolutionize the tech industry. With a strong focus on research and development, we aim to create groundbreaking solutions that address the challenges of today and shape the future. Our team consists of highly skilled engineers, designers, and visionaries who work tirelessly to push the boundaries of what's possible.";
+const aboutContent = 'At ALTech, we strive to revolutionize the tech industry. With a strong focus on research and development, we aim to create groundbreaking solutions that address the challenges of today and shape the future. Our team consists of highly skilled engineers, designers, and visionaries who work tirelessly to push the boundaries of what\'s possible.';
 
-const contactContent = "We'd love to hear from you! Whether you have questions, feedback, or partnership inquiries, feel free to get in touch with us. Our dedicated support team is available to assist you and provide the information you need. Reach out to us via phone, email, or by filling out the contact form below.";
+const contactContent = 'We\'d love to hear from you! Whether you have questions, feedback, or partnership inquiries, feel free to get in touch with us. Our dedicated support team is available to assist you and provide the information you need. Reach out to us via phone, email, or by filling out the contact form below.';
 
 const app = express();
 
-app.set('view engine', 'ejs');
+// Middleware
+app.use(cookieParser()); // Parse cookies
+app.use(
+    session({
+        secret: process.env.SECRET_KEY, // Secret key used to sign the session ID cookie
+        resave: false, // Do not save the session if it hasn't been modified
+        saveUninitialized: false, // Do not save uninitialized sessions
+        store: new MongoStore({ mongooseConnection: mongoose.connection }), // Store sessions in MongoDB
+        cookie: {
+            maxAge: 60 * 60 * 1000, // Set the session cookie to expire after 1 hour
+        },
+    })
+);
 
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static("public"));
+app.set('view engine', 'ejs'); // Set EJS as the view engine
+app.use(bodyParser.urlencoded({ extended: true })); // Parse URL-encoded request bodies
+app.use(express.static('public')); // Serve static files from the "public" directory
 
-mongoose.connect("mongodb://localhost:27017/blogDB", { useNewUrlParser: true, useUnifiedTopology: true });
+mongoose.connect('mongodb://localhost:27017/blogDB', { useNewUrlParser: true, useUnifiedTopology: true }); // Connect to MongoDB
 
-const userSchema = new mongoose.Schema({
-    email: String,
-    password: String,
-    isAdmin: { type: Boolean, default: false }
-});
+// Create Mongoose schema and models for sessions, users, and posts
 
-
-const User = mongoose.model("User", userSchema);
-
-const postSchema = new mongoose.Schema({
-    title: String,
-    content: String,
-    author: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-        required: true
-    }
-});
-
-const Post = mongoose.model("Post", postSchema);
-
-app.get("/", function(req, res) {
+// Home route
+app.get('/', function(req, res) {
+    // Fetch all posts from the database
     Post.find({})
-        .then(posts => {
-            res.render("home", {
+        .then((posts) => {
+            // Render the home page with the fetched posts
+            res.render('home', {
                 startingContent: homeStartingContent,
-                posts: posts
+                posts: posts,
             });
         })
-        .catch(error => {
+        .catch((error) => {
             console.error('Error finding posts:', error);
-            res.status(500).send("Error finding posts");
+            res.status(500).send('Error finding posts');
         });
 });
 
-
-app.route("/register")
+// Register route
+app.route('/register')
     .get(function(req, res) {
-        res.render("register");
+        // Render the registration form
+        res.render('register');
     })
     .post(async function(req, res) {
         try {
+            // Generate a salt and hash the user's password using argon2
             const salt = await argon2.generateSalt();
             const hashedPassword = await argon2.hash(req.body.password, { salt });
+
+            // Create a new user with the provided email, hashed password, and admin status
             const newUser = new User({
                 email: req.body.email,
                 password: hashedPassword,
-                isAdmin: req.body.isAdmin === "true"
+                isAdmin: req.body.isAdmin === 'true',
             });
 
+            // Save the new user to the database
             await newUser.save();
-            res.redirect("/login");
+            res.redirect('/login'); // Redirect to the login page
         } catch (err) {
             console.log(err);
-            res.redirect("/register");
+            res.redirect('/register'); // Redirect back to the registration page on error
         }
     });
 
-
-
-app.route("/login")
+// Login route
+app.route('/login')
     .get(function(req, res) {
-        res.render("login");
+        // Render the login form
+        res.render('login');
     })
     .post(function(req, res) {
-        const username = req.body.username;
+        const email = req.body.email;
         const password = req.body.password;
 
-        User.findOne({ username: username })
-            .then(foundUser => {
+        // Find the user with the provided email in the database
+        User.findOne({ email: email })
+            .then((foundUser) => {
                 if (foundUser) {
                     // Verify the password using argon2.verify
                     argon2.verify(foundUser.password, password)
-                        .then(match => {
+                        .then((match) => {
                             if (match) {
-                                res.redirect("/");
+                                req.session.user = foundUser; // Set session user
+                                res.redirect('/'); // Redirect to the home page
                             } else {
-                                res.redirect("/login");
+                                res.redirect('/login'); // Redirect back to the login page if the password is incorrect
                             }
                         })
-                        .catch(err => {
+                        .catch((err) => {
                             console.log(err);
-                            res.redirect("/login");
+                            res.redirect('/login'); // Redirect back to the login page on error
                         });
                 } else {
-                    res.redirect("/login");
+                    res.redirect('/login'); // Redirect back to the login page if the user is not found
                 }
             })
-            .catch(err => {
+            .catch((err) => {
                 console.log(err);
-                res.redirect("/login");
+                res.redirect('/login'); // Redirect back to the login page on error
             });
     });
-app.get("/admin", function(req, res) {
+
+// Admin route
+app.get('/admin', function(req, res) {
     // Check if the user is authenticated and is an admin
-    if (req.isAuthenticated() && req.user.isAdmin) {
-        res.render("admin");
+    if (req.session.user && req.session.user.isAdmin) {
+        res.render('admin'); // Render the admin page
     } else {
-        res.redirect("/login");
+        res.redirect('/login'); // Redirect to the login page if not authenticated or not an admin
     }
 });
 
-app.route("/compose")
+// Compose route
+app.route('/compose')
     .get(function(req, res) {
         // Check if the user is authenticated
-        if (req.isAuthenticated()) {
-            res.render("compose");
+        if (req.session.user) {
+            res.render('compose'); // Render the compose page
         } else {
-            res.redirect("/login");
+            res.redirect('/login'); // Redirect to the login page if not authenticated
         }
     })
     .post(function(req, res) {
         // Check if the user is authenticated
-        if (req.isAuthenticated()) {
+        if (req.session.user) {
+            // Create a new post with the provided title, content, and author (current user)
             const post = new Post({
                 title: req.body.postTitle,
                 content: req.body.postBody,
-                author: req.user._id // Set the author field to the current user's ID
+                author: req.session.user._id,
             });
 
+            // Save the new post to the database
             post.save(function(err) {
                 if (!err) {
-                    res.redirect("/");
+                    res.redirect('/'); // Redirect to the home page after saving the post
                 }
             });
         } else {
-            res.redirect("/login");
+            res.redirect('/login'); // Redirect to the login page if not authenticated
         }
     });
 
-app.get("/posts/:postId", function(req, res) {
+// Single post route
+app.get('/posts/:postId', function(req, res) {
     const requestedPostId = req.params.postId;
 
+    // Find the post with the provided ID in the database
     Post.findOne({ _id: requestedPostId }, function(err, post) {
-        res.render("post", {
+        res.render('post', {
             title: post.title,
-            content: post.content
-        });
-    });
-}); // Add route for editing a post
-app.get("/posts/:postId/edit", function(req, res) {
-    const requestedPostId = req.params.postId;
-
-    Post.findOne({ _id: requestedPostId, author: req.user._id }, function(err, post) {
-        if (err || !post) {
-            res.redirect("/");
-        } else {
-            res.render("edit", {
-                post: post
-            });
-        }
+            content: post.content,
+        }); // Render the post page with the fetched post
     });
 });
 
-// Add route for updating a post
-app.post("/posts/:postId/edit", function(req, res) {
+// Edit post route
+app.get('/posts/:postId/edit', function(req, res) {
+    const requestedPostId = req.params.postId;
+
+    // Check if the user is authenticated and is the author of the post
+    if (req.session.user) {
+        Post.findOne({ _id: requestedPostId, author: req.session.user._id }, function(err, post) {
+            if (err || !post) {
+                res.redirect('/'); // Redirect to the home page if the post is not found or the user is not the author
+            } else {
+                res.render('edit', {
+                    post: post,
+                }); // Render the edit page with the post data
+            }
+        });
+    } else {
+        res.redirect('/login'); // Redirect to the login page if not authenticated
+    }
+});
+
+// Update post route
+app.post('/posts/:postId/edit', function(req, res) {
     const requestedPostId = req.params.postId;
     const updatedTitle = req.body.postTitle;
     const updatedContent = req.body.postBody;
 
-    Post.findOneAndUpdate({ _id: requestedPostId, author: req.user._id }, { $set: { title: updatedTitle, content: updatedContent } },
-        function(err) {
-            if (!err) {
-                res.redirect("/");
+    // Check if the user is authenticated and is the author of the post
+    if (req.session.user) {
+        // Find the post by ID and update the title and content
+        Post.findOneAndUpdate({ _id: requestedPostId, author: req.session.user._id }, { $set: { title: updatedTitle, content: updatedContent } },
+            function(err) {
+                if (!err) {
+                    res.redirect('/'); // Redirect to the home page after updating the post
+                }
             }
-        }
-    );
+        );
+    } else {
+        res.redirect('/login'); // Redirect to the login page if not authenticated
+    }
 });
 
-// Add route for deleting a post
-app.post("/posts/:postId/delete", function(req, res) {
+// Delete post route
+app.post('/posts/:postId/delete', function(req, res) {
     const requestedPostId = req.params.postId;
 
-    Post.findOneAndDelete({ _id: requestedPostId, author: req.user._id }, function(err) {
-        if (!err) {
-            res.redirect("/");
-        }
-    });
+    // Check if the user is authenticated and is the author of the post
+    if (req.session.user) {
+        // Find the post by ID and delete it
+        Post.findOneAndDelete({ _id: requestedPostId, author: req.session.user._id }, function(err) {
+            if (!err) {
+                res.redirect('/'); // Redirect to the home page after deleting the post
+            }
+        });
+    } else {
+        res.redirect('/login'); // Redirect to the login page if not authenticated
+    }
 });
 
-
-app.get("/about", function(req, res) {
-    res.render("about", { aboutContent: aboutContent });
+// About route
+app.get('/about', function(req, res) {
+    res.render('about', { aboutContent: aboutContent }); // Render the about page with the aboutContent
 });
 
-app.get("/contact", function(req, res) {
-    res.render("contact", { contactContent: contactContent });
+// Contact route
+app.get('/contact', function(req, res) {
+    res.render('contact', { contactContent: contactContent }); // Render the contact page with the contactContent
 });
 
 app.listen(3000, function() {
-    console.log("Server started on port 3000");
+    console.log('Server started on port 3000'); // Start the server on port 3000
 });
